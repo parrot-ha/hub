@@ -253,7 +253,10 @@ public class IntegrationService {
     public Collection<IntegrationConfiguration> getIntegrations() {
         Collection<IntegrationConfiguration> integrations = configurationService.getIntegrations();
         for (IntegrationConfiguration integrationConfiguration : integrations) {
-            integrationConfiguration.setName(getIntegrationById(integrationConfiguration.getId()).getName());
+            AbstractIntegration abstractIntegration = getIntegrationById(integrationConfiguration.getId());
+            if(abstractIntegration != null) {
+                integrationConfiguration.setName(abstractIntegration.getName());
+            }
         }
         return integrations;
     }
