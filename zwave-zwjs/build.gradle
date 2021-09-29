@@ -14,4 +14,5 @@ dependencies {
     implementation group: 'org.apache.logging.log4j', name: 'log4j-core', version: "${log4jVersion}"
 
     implementation "org.java-websocket:Java-WebSocket:1.5.2"
+    implementation 'org.codehaus.groovy:groovy-json:3.0.9'
 }

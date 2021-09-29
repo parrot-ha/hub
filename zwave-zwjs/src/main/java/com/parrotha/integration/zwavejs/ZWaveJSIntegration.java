@@ -25,10 +25,8 @@ import com.parrotha.integration.extension.DeviceExcludeIntegrationExtension;
 import com.parrotha.integration.extension.DeviceScanIntegrationExtension;
 import com.parrotha.integration.extension.ResetIntegrationExtension;
 import com.parrotha.internal.utils.HexUtils;
-import com.parrotha.ui.PageLayoutBuilder;
 import com.parrotha.ui.PreferencesBuilder;
 import com.parrotha.zwave.commands.networkmanagementinclusionv3.NodeAddStatus;
-import com.parrotha.zwave.commands.networkmanagementinclusionv3.NodeRemoveStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,7 +39,7 @@ import java.util.Map;
 import java.util.ResourceBundle;
 
 public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExcludeIntegrationExtension, DeviceScanIntegrationExtension,
-        ResetIntegrationExtension {
+        ResetIntegrationExtension, ZWaveJSWSClient.EventListener {
     private static final Logger logger = LoggerFactory.getLogger(ZWaveJSIntegration.class);
 
     private ZWaveJSWSClient zWaveJSWSClient;
@@ -55,7 +53,7 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
         }
 
         String address = getSetting("zwaveJSServerAddress");
-        if(address == null || address.isBlank()) {
+        if (address == null || address.isBlank()) {
             address = "localhost:3000";
         }
 
@@ -63,6 +61,7 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
             System.out.println("zwavejs connecting to " + address);
             zWaveJSWSClient = new ZWaveJSWSClient(new URI("ws://" + address));
             zWaveJSWSClient.connect();
+            zWaveJSWSClient.addEventListener(this);
         } catch (URISyntaxException e) {
             e.printStackTrace();
         }
@@ -104,7 +103,12 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
 
     @Override
     public HubResponse processAction(HubAction hubAction) {
-//        zipgwHandler.sendZWaveCommand(HexUtils.hexStringToInt(hubAction.getDni()), hubAction.getAction());
+        logger.debug("Got hubAction: " + hubAction.toString());
+
+        if (hubAction.getAction().startsWith("2001")) {
+            zWaveJSWSClient.setValue(HexUtils.hexStringToInt(hubAction.getDni()), 0x20, "targetValue",
+                    HexUtils.hexStringToInt(hubAction.getAction().substring("2001".length())));
+        }
         return null;
     }
 
@@ -138,6 +142,7 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
     }
 
     private boolean excludeRunning = false;
+    private boolean stoppingExclude = false;
     private List<Map<String, String>> excludedDevices;
     private String excludeMessage = null;
 
@@ -145,36 +150,19 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
     public boolean startExclude(Map options) {
         excludeMessage = null;
         excludedDevices = null;
-//        excludeRunning = zipgwHandler.startNodeRemove();
+        excludeRunning = zWaveJSWSClient.startExclusion();
 
         return excludeRunning;
     }
 
     @Override
     public boolean stopExclude(Map options) {
-//        if (zipgwHandler.stopNodeRemove()) {
-            excludeRunning = false;
+        stoppingExclude = true;
+        if (zWaveJSWSClient.stopExclusion()) {
+            //excludeRunning = false;
             return true;
-//        }
-//        return false;
-    }
-
-    public void processExcludeStatus(NodeRemoveStatus nodeRemoveStatus) {
-        excludeRunning = false;
-        if (nodeRemoveStatus.getStatus() == NodeRemoveStatus.REMOVE_NODE_STATUS_DONE) {
-            excludeMessage = "Successfully excluded device";
-            if (excludedDevices == null) {
-                excludedDevices = new ArrayList<>();
-            }
-            if (nodeRemoveStatus.getNodeId() != 0x00) {
-                excludedDevices.add(Map.of("deviceNetworkId", HexUtils.integerToHexString(nodeRemoveStatus.getNodeId(), 1)));
-            } else {
-                excludedDevices.add(Map.of("deviceNetworkId", "Unknown"));
-            }
-
-        } else if (nodeRemoveStatus.getStatus() == NodeRemoveStatus.REMOVE_NODE_STATUS_FAILED) {
-            excludeMessage = "Failed to excluded device";
         }
+        return false;
     }
 
     @Override
@@ -193,7 +181,7 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
 
     @Override
     public boolean startScan(Map options) {
-//        scanRunning = zipgwHandler.startNodeAdd();
+        scanRunning = zWaveJSWSClient.startInclusion();
         return scanRunning;
     }
 
@@ -220,11 +208,11 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
 
     @Override
     public boolean stopScan(Map options) {
-//        if (zipgwHandler.stopNodeAdd()) {
+        if (zWaveJSWSClient.stopInclusion()) {
             scanRunning = false;
             return true;
-//        }
-//        return false;
+        }
+        return false;
     }
 
     @Override
@@ -278,4 +266,20 @@ public class ZWaveJSIntegration extends DeviceIntegration implements DeviceExclu
         }
     }
 
+    @Override
+    public void onEvent(EventMessage eventtMessage) {
+        logger.debug("Got event " + eventtMessage.toString());
+        if ("exclusion stopped".equals(eventtMessage.getEvent()) && "controller".equals(eventtMessage.getSource())) {
+            // if stoppingExclude == true, then we stopped the exclude, otherwise some device was excluded
+            if (!stoppingExclude) {
+                excludeMessage = "Successfully excluded device";
+                if (excludedDevices == null) {
+                    excludedDevices = new ArrayList<>();
+                }
+                excludedDevices.add(Map.of("deviceNetworkId", "Unknown"));
+            }
+            stoppingExclude = false;
+            excludeRunning = false;
+        }
+    }
 }
